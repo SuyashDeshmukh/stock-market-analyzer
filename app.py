@@ -4,6 +4,8 @@ from tradingview_ta import TA_Handler, Interval, Exchange
 from ddgs import DDGS
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import pandas as pd
+from curl_cffi import requests
+from bs4 import BeautifulSoup
 
 st.set_page_config(page_title="Stock Market Analyzer", layout="wide")
 
@@ -15,16 +17,19 @@ ticker_input = st.text_input("Enter a Stock Ticker (e.g., AAPL, TSLA, MSFT):").u
 def get_reddit_opinion(ticker):
     analyzer = SentimentIntensityAnalyzer()
     results = []
+    links = []
     try:
         with DDGS() as ddgs:
             # We search for the ticker and some keywords to find stock opinions on Reddit
             for r in ddgs.text(f"site:reddit.com {ticker} stock opinion", max_results=20):
                 results.append(r['body'])
+                if 'href' in r:
+                    links.append(r['href'])
     except Exception as e:
-        return "Error fetching Reddit data", 0
+        return "Error fetching Reddit data", 0, []
 
     if not results:
-        return "No recent Reddit discussions found.", 0
+        return "No recent Reddit discussions found.", 0, []
 
     scores = [analyzer.polarity_scores(text)['compound'] for text in results]
     avg_score = sum(scores) / len(scores)
@@ -36,7 +41,33 @@ def get_reddit_opinion(ticker):
     else:
         sentiment = "Neutral 🟡"
     
-    return sentiment, avg_score
+    # Deduplicate links and take top 5
+    unique_links = list(dict.fromkeys(links))[:5]
+    return sentiment, avg_score, unique_links
+
+def get_finviz_recommendation(ticker):
+    url = f"https://finviz.com/quote.ashx?t={ticker}"
+    try:
+        response = requests.get(url, impersonate="chrome110")
+        soup = BeautifulSoup(response.text, 'html.parser')
+        recom_td = soup.find(string="Recom")
+        if recom_td:
+            recom_value_td = recom_td.find_parent('td').find_next_sibling('td')
+            if recom_value_td:
+                recom = float(recom_value_td.text.strip())
+                if recom <= 1.5:
+                    return f"STRONG BUY ({recom})"
+                elif recom <= 2.5:
+                    return f"BUY ({recom})"
+                elif recom <= 3.5:
+                    return f"HOLD ({recom})"
+                elif recom <= 4.5:
+                    return f"SELL ({recom})"
+                else:
+                    return f"STRONG SELL ({recom})"
+        return "N/A"
+    except Exception:
+        return "N/A"
 
 def get_tradingview_analysis(ticker):
     try:
@@ -99,11 +130,14 @@ if ticker_input:
             # 2. TradingView TA
             tv_summary = get_tradingview_analysis(ticker_input)
             
-            # 3. YF News
+            # 3. Finviz Recom
+            finviz_rec = get_finviz_recommendation(ticker_input)
+            
+            # 4. YF News
             news = ticker.news[:5] if ticker.news else []
             
-            # 4. Reddit Opinion
-            reddit_sentiment, reddit_score = get_reddit_opinion(ticker_input)
+            # 5. Reddit Opinion
+            reddit_sentiment, reddit_score, reddit_links = get_reddit_opinion(ticker_input)
 
             # Display Data
             st.header(f"{name} ({ticker_input})")
@@ -121,17 +155,17 @@ if ticker_input:
             st.divider()
 
             st.subheader("Buy / Sell Recommendation")
-            rec_col1, rec_col2 = st.columns(2)
+            rec_col1, rec_col2, rec_col3 = st.columns(3)
             
             with rec_col1:
-                st.markdown("### Analyst Recommendation (Yahoo Finance)")
+                st.markdown("### Yahoo Finance")
                 if yf_rec and yf_rec != 'N/A':
                     st.info(f"**{yf_rec.upper()}**")
                 else:
                     st.write("Data not available")
 
             with rec_col2:
-                st.markdown("### Technical Analysis (TradingView)")
+                st.markdown("### TradingView")
                 if tv_summary:
                     tv_rec = tv_summary.get('RECOMMENDATION', 'N/A')
                     st.info(f"**{tv_rec}**")
@@ -139,12 +173,20 @@ if ticker_input:
                 else:
                     st.write("Technical analysis data not available.")
 
+            with rec_col3:
+                st.markdown("### Finviz Analysts")
+                st.info(f"**{finviz_rec}**")
+
             st.divider()
 
             st.subheader("Reddit Opinion")
             st.markdown(f"**Overall Sentiment:** {reddit_sentiment}")
             st.caption(f"Sentiment Score: {reddit_score:.2f} (Range: -1 to 1)")
             st.write("Based on recent discussions on Reddit.")
+            if reddit_links:
+                st.markdown("**Sample Threads:**")
+                for link in reddit_links:
+                    st.markdown(f"- [{link}]({link})")
 
             st.divider()
 

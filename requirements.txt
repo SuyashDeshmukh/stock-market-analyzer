@@ -4,3 +4,6 @@ tradingview-ta
 ddgs
 vaderSentiment
 pandas
+curl_cffi
+beautifulsoup4
+pytest
