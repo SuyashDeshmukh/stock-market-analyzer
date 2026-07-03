@@ -153,8 +153,12 @@ if ticker_input:
             
             st.markdown("**Latest News:**")
             for n in news:
-                title = n.get('content', {}).get('title')
-                link = n.get('content', {}).get('clickThroughUrl', {}).get('url')
+                content = n.get('content') or {}
+                title = content.get('title')
+                
+                click_url = content.get('clickThroughUrl') or {}
+                link = click_url.get('url')
+                
                 if title:
                     if link:
                         st.markdown(f"- [{title}]({link})")
